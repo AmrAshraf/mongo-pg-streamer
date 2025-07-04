@@ -1,0 +1,203 @@
+# Real-Time MongoDB to PostgreSQL Data Pipeline
+
+This project demonstrates a real-time Change Data Capture (CDC) pipeline that streams data changes from a MongoDB collection to a PostgreSQL table. It uses Debezium as the CDC platform, Apache Kafka as the streaming message broker, and a custom .NET application as the consumer that writes to PostgreSQL.
+
+The entire environment is orchestrated using Docker Compose.
+
+
+## 🚀 Getting Started
+
+These instructions will get you a copy of the project up and running on your local machine for development and testing purposes.
+
+### Prerequisites
+
+You must have the following software installed on your machine:
+*   [Docker](https://www.docker.com/get-started)
+*   [Docker Compose](https://docs.docker.com/compose/install/)
+
+### Setup and Configuration
+
+Follow these steps to build and run the entire pipeline.
+
+#### Step 1: Start All Services
+
+Clone this repository and launch all services using Docker Compose. The `--build` flag will build the custom .NET consumer image.
+
+```bash
+docker-compose up -d --build
+```
+This command starts:
+*   MongoDB (Source Database)
+*   PostgreSQL (Target Database)
+*   ZooKeeper & Kafka (Messaging System)
+*   Kafka Connect with Debezium (CDC Connector)
+*   .NET Consumer (App that writes to PostgreSQL)
+
+---
+
+#### Step 2: Initialize the MongoDB Replica Set (One-Time Setup)
+
+Debezium requires MongoDB to be running as a replica set to be able to read its oplog (operations log).
+
+1.  **Enter the MongoDB container:**
+    ```bash
+    docker-compose exec -it mongodb bash
+    ```
+
+2.  **Start the MongoDB Shell:**
+    ```bash
+    mongosh
+    ```
+
+3.  **Initiate the replica set.** Inside the `mongosh` prompt, run the following command:
+    ```javascript
+    rs.initiate({
+      _id : "rs0",
+      members: [
+        { _id: 0, host: "mongodb:27017" }
+      ]
+    });
+    ```
+    You should see an output with `"ok": 1`. Your `mongosh` prompt will change to `rs0 [primary] >` to indicate it's part of a replica set. You can then `exit` the shell and the container.
+
+---
+
+#### Step 3: Create the Target Table in PostgreSQL
+
+The consumer application needs a table in PostgreSQL to write the data into.
+
+1.  **Enter the PostgreSQL container:**
+    ```bash
+    docker-compose exec -it postgres bash
+    ```
+
+2.  **Connect to the database using `psql`:**
+    ```bash
+    psql -U app_user -d production_database
+    ```
+    (The password `secretPassword` will be used automatically from the environment).
+
+3.  **Create the `users` table.** Inside the `psql` prompt, run the following SQL command:
+    ```sql
+    CREATE TABLE users (
+        id    VARCHAR(50) NOT NULL PRIMARY KEY,
+        name  VARCHAR(100),
+        email VARCHAR(100),
+        age   INTEGER
+    );
+    ```
+    You can verify the table was created with `\dt`. Then `exit` psql and the container.
+
+---
+
+#### Step 4: Create the Debezium MongoDB Connector
+
+Now, we instruct Kafka Connect to start monitoring our MongoDB `users` collection.
+
+Run the following `curl` command from your host machine's terminal. This sends the connector configuration to the Kafka Connect REST API.
+
+```bash
+curl -X POST http://localhost:8083/connectors -H "Content-Type:application/json" -d '{
+  "name": "mongodb-connector",
+  "config": {
+    "connector.class": "io.debezium.connector.mongodb.MongoDbConnector",
+    "tasks.max": "1",
+    
+    "mongodb.connection.string": "mongodb://mongodb:27017/?replicaSet=rs0",
+
+    "database.include.list": "productionData",
+    "collection.include.list": "productionData.users",
+    
+    "topic.prefix": "mongo"
+  }
+}'
+```
+
+---
+
+## ✅ Verifying the Pipeline
+
+At this point, the pipeline is fully configured. Let's test it.
+
+### 1. Check the Connector Status
+
+Open your browser and navigate to the Kafka Connect UI to see if the connector is running:
+*   **URL:** [http://localhost:8083/connectors/mongodb-connector/status](http://localhost:8083/connectors/mongodb-connector/status)
+
+You should see `"state": "RUNNING"` for both the connector and its tasks.
+
+### 2. Seed MongoDB with Initial Data
+
+Let's insert some data into MongoDB. Debezium will perform an initial "snapshot" and stream these existing documents to Kafka.
+
+1.  Enter the `mongosh` shell again (`docker-compose exec -it mongodb mongosh`).
+2.  Run the following commands:
+    ```javascript
+    use productionData;
+
+    db.users.insertMany([
+      { name: "John", email: "john@example.com", age: 30 },
+      { name: "Emma", email: "emma@example.com", age: 25 },
+      { name: "Michael", email: "michael@example.com", age: 28 }
+    ]);
+    ```
+
+### 3. Check the Data in PostgreSQL
+
+After a few seconds, the .NET consumer should have processed the messages and inserted the data into PostgreSQL.
+
+1.  Connect to `psql` again (`docker-compose exec -it postgres psql -U app_user -d production_database`).
+2.  Query the `users` table:
+    ```sql
+    SELECT * FROM users;
+    ```
+    You should see the three records for John, Emma, and Michael!
+
+---
+
+## ⚡ Testing Real-Time Changes
+
+The real power of this pipeline is capturing live changes.
+
+1.  **Insert a new document** into MongoDB:
+    ```javascript
+    // In the mongosh shell
+    use productionData;
+    db.users.insertOne({name:"Elly", email:"elly@company.com", age:40});
+    ```
+2.  **Query PostgreSQL again.** A few moments later, run `SELECT * FROM users;`. You will see Elly's record has appeared automatically.
+
+3.  **Update a document** in MongoDB:
+    ```javascript
+    db.users.updateOne({name: "John"}, {$set: {age: 31}});
+    ```
+4.  **Query PostgreSQL.** You'll see that John's age has been updated to 31.
+
+## 🛠️ Useful Commands
+
+#### View Service Logs
+```bash
+# View logs for a specific service (e.g., the consumer)
+docker-compose logs -f consumer
+
+# View all logs
+docker-compose logs -f
+```
+
+#### Service Endpoints
+
+| Service         | URL / Command                                            | Purpose                                  |
+|-----------------|----------------------------------------------------------|------------------------------------------|
+| Kafka Connect   | [http://localhost:8083](http://localhost:8083)            | Manage and monitor Debezium connectors.  |
+| PostgreSQL      | `psql -h localhost -p 5432 -U app_user -d production_database` | Connect to the target DB from host.      |
+| MongoDB         | `docker-compose exec -it mongodb mongosh`                | Connect to the source DB.                |
+
+---
+
+## 🧹 Cleanup
+
+To stop and remove all containers, networks, and volumes created by Docker Compose, run:
+
+```bash
+docker-compose down -v
+```
