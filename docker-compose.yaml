@@ -11,7 +11,7 @@ services:
   kafka:
     image: confluentinc/cp-kafka:latest
     container_name: kafka
-    ports:
+    #ports:
      # - "9092:9092" # internal
      # - "9093:9093" # Port for the KRaft controller
      # - 9094:9094 #external
@@ -102,6 +102,7 @@ services:
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: "kafka:9092"
 
   consumer:
+    restart: always
     # This tells Docker Compose to build the image from the Dockerfile
     # in the ./consumer-app directory.
     build: ./consumer-app 

@@ -94,7 +94,7 @@ The consumer application needs a table in PostgreSQL to write the data into.
 
 Now, we instruct Kafka Connect to start monitoring our MongoDB `users` collection.
 
-Run the following `curl` command from your host machine's terminal. This sends the connector configuration to the Kafka Connect REST API.
+Run the following `curl` command from your host machine's bash terminal. This sends the connector configuration to the Kafka Connect REST API.
 
 ```bash
 curl -X POST http://localhost:8083/connectors -H "Content-Type:application/json" -d '{
@@ -134,7 +134,8 @@ Let's insert some data into MongoDB. Debezium will perform an initial "snapshot"
 2.  Run the following commands:
     ```javascript
     use productionData;
-
+    ```
+    ```javascript
     db.users.insertMany([
       { name: "John", email: "john@example.com", age: 30 },
       { name: "Emma", email: "emma@example.com", age: 25 },
@@ -161,8 +162,9 @@ The real power of this pipeline is capturing live changes.
 
 1.  **Insert a new document** into MongoDB:
     ```javascript
-    // In the mongosh shell
     use productionData;
+    ```
+    ```javascript
     db.users.insertOne({name:"Elly", email:"elly@company.com", age:40});
     ```
 2.  **Query PostgreSQL again.** A few moments later, run `SELECT * FROM users;`. You will see Elly's record has appeared automatically.
